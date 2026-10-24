@@ -1,0 +1,1 @@
+{ "name": "rls-audit", "version": "1.0.0", "description": "Signale les tables SQL sans RLS ou sans politique (fichier SQL ou audit en direct dans Supabase).", "license": "MIT", "bin": { "rls-audit": "rls-audit.js" }, "engines": { "node": ">=18" } }
