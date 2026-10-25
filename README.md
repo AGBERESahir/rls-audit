@@ -11,80 +11,102 @@ Deux façons de l'utiliser :
 | Audit d'un fichier SQL | Avant de déployer : schéma, migration | `rls-audit.js` (Node 18+, sans dépendance) |
 | Audit en direct | Sur la vraie base, telle qu'elle est maintenant | `rls-audit.sql` (à coller dans Supabase) |
 
-## 1. Auditer un fichier SQL
+## 1. Auditer des fichiers SQL
 
 ```bash
 npx github:AGBERESahir/rls-audit schema.sql
+# un dossier de migrations entier (lu dans l'ordre alphabétique)
+npx github:AGBERESahir/rls-audit supabase/migrations
 # ou, depuis une copie locale
 node rls-audit.js schema.sql
 ```
 
-Exemple, avec ce `schema.sql` :
+Les instructions sont **rejouées dans l'ordre**, comme le ferait PostgreSQL : une table créée puis supprimée par une migration ultérieure n'est pas signalée, et une RLS désactivée après coup est détectée.
 
-```sql
-create table public.profiles (id uuid primary key, nom text);
-alter table public.profiles enable row level security;
-create policy "lecture" on public.profiles for select using (true);
-
-create table notes (id bigint primary key, user_id uuid);
-alter table notes enable row level security;
-
-create table paiements (id bigint primary key);
-```
-
-Résultat :
+Un exemple à essayer tout de suite : `npm run exemple` (le fichier est dans [`exemple/schema-risque.sql`](exemple/schema-risque.sql)).
 
 ```text
-🟢 profiles : RLS activée, politique(s) présente(s)
-🟠 notes : RLS activée mais aucune politique (personne n’a accès)
-🔴 paiements : RLS non activée (accessible à tout porteur de la clé anon)
+🟢 profiles : RLS activée, 1 politique(s).
+🔴 messages : RLS non activée : la table est lisible et modifiable par tout porteur de la clé anon.
+🔴 notes : RLS non activée alors que 1 politique(s) existent : elles n'ont aucun effet.
+🟠 notes : politique « tout le monde » : ALL autorisé sans condition (true).
+🟠 vide : RLS activée mais aucune politique : personne n'a accès (sauf la clé service_role).
+🟠 posts : politique « ecrit anon » : INSERT ouvert au rôle anon (visiteurs non connectés).
+🟡 posts : politique « p2 » : écris (select auth.uid()) plutôt que auth.uid() pour de meilleures performances.
+🟠 vue stats : sans security_invoker = true : la vue s'exécute avec les droits de son propriétaire et contourne la RLS.
+🟠 fonction secret : SECURITY DEFINER sans SET search_path : risque de détournement de schéma.
+
+1 fichier(s), 2 critique(s), 6 important(s), 4 info(s).
 ```
+
+### Options
+
+| Option | Effet |
+|---|---|
+| `<fichier.sql ou dossier>` | Un ou plusieurs fichiers, ou des dossiers (récursif, ordre alphabétique). |
+| `--schema=NOM` | Audite aussi ce schéma, en plus de `public`. Répétable. |
+| `--strict` | Le code de sortie est `1` aussi pour les alertes 🟠. |
+| `--json` | Sortie JSON pour les scripts et la CI. |
+| `-h`, `--help` | Affiche l'aide. |
+
+### Lire les résultats
 
 | Pastille | Signification | Action |
 |---|---|---|
-| 🔴 | RLS non activée : table ouverte à tous. | **À corriger immédiatement** : `alter table ... enable row level security;` puis écrire les politiques. |
-| 🟠 | RLS activée mais aucune politique : la table est verrouillée, personne (hors `service_role`) ne peut lire ni écrire. | Écrire les politiques voulues, ou laisser tel quel si la table n'est utilisée que côté serveur. |
-| 🟢 | RLS activée et au moins une politique. | Vérifier que la politique est bien celle voulue (voir ci-dessous). |
+| 🔴 **critique** | RLS non activée (table ouverte à tous), ou politiques écrites sur une table dont la RLS est désactivée (elles ne servent à rien). | **À corriger immédiatement** : `alter table ... enable row level security;` puis écrire les politiques. |
+| 🟠 **important** | RLS sans aucune politique ; écriture autorisée sans condition (`true`) ou au rôle `anon` ; vue sans `security_invoker` ; fonction `SECURITY DEFINER` sans `search_path`. | À examiner : parfois voulu, rarement anodin. |
+| 🟡 **info** | Politique sans clause `TO` ; `auth.uid()` non enveloppé dans `(select ...)` ; colonne `user_id` filtrée sans index ; lecture ouverte à tous. | Améliorations de sécurité ou de performance. |
+| 🟢 | RLS activée et au moins une politique, sans alerte critique ni importante. | Vérifier que la politique est bien celle voulue. |
 
-**Code de sortie** : `1` si au moins une table est en 🔴, `0` sinon. Les 🟠 ne font pas échouer la commande. Tu peux donc l'ajouter à une CI ou à un script de déploiement :
+**Code de sortie** : `1` s'il y a au moins une alerte 🔴 (ou 🟠 avec `--strict`), `0` sinon. Tu peux donc l'ajouter à une CI ou à un script de déploiement :
 
 ```bash
-node rls-audit.js supabase/schema.sql || { echo "RLS manquante"; exit 1; }
+node rls-audit.js supabase/migrations || { echo "RLS manquante"; exit 1; }
 ```
 
-> Dans l'exemple, `profiles` est en vert mais sa politique est `using (true)` : tout le monde peut lire. Le 🟢 dit seulement qu'une politique existe, pas qu'elle est correcte. L'audit en direct ci-dessous la signale.
+> Le 🟢 dit qu'une politique existe, pas qu'elle protège les bonnes lignes. Une politique `using (user_id is not null)` donne un 🟢 alors que tout utilisateur connecté lit toutes les lignes. Relis toujours les politiques à la main.
 
 ## 2. Auditer la base en direct
 
 1. Ouvre ton projet Supabase, puis **SQL Editor**.
 2. Colle le contenu de [`rls-audit.sql`](rls-audit.sql).
-3. Exécute les trois requêtes. Si l'éditeur n'affiche que le résultat de la dernière, lance-les **une par une**.
+3. Exécute les requêtes **une par une** (l'éditeur n'affiche que le résultat de la dernière).
 
-| Requête | Ce qu'elle liste | Résultat attendu |
+Chaque requête doit renvoyer **0 ligne**. Une ligne affichée est un point à examiner.
+
+| N° | Niveau | Ce qu'elle liste |
 |---|---|---|
-| 1 | Tables du schéma `public` **sans RLS** | Aucune ligne |
-| 2 | Tables avec RLS mais **sans aucune politique** | Aucune ligne, sauf tables volontairement réservées au serveur |
-| 3 | Politiques d'écriture trop permissives (`using (true)` ou `with check (true)`) sur autre chose que `SELECT` | Aucune ligne, sauf cas voulu |
+| 1 | 🔴 | Tables de `public` **sans RLS** |
+| 2 | 🔴 | Politiques **sans effet** car la RLS est désactivée sur la table |
+| 3 | 🟠 | Tables avec RLS mais **sans aucune politique** |
+| 4 | 🟠 | Politiques d'écriture sans condition (`true`) ou ouvertes au rôle `anon` |
+| 5 | 🟠 | **Vues** sans `security_invoker = true` (PostgreSQL 15+) |
+| 6 | 🟠 | Fonctions **`SECURITY DEFINER`** sans `search_path` fixé |
+| 7 | 🟠 | **Buckets de stockage publics** (fichiers lisibles par tous) |
+| 8 | 🟡 | Politiques sans clause `TO` (donc valables aussi pour `anon`) |
+| 9 | 🟡 | `auth.uid()` non enveloppé dans `(select auth.uid())` |
+| 10 | 🟡 | Colonne `user_id` **sans index** |
 
-Les requêtes ne font que **lire** le catalogue PostgreSQL (`pg_tables`, `pg_policies`) : elles ne modifient rien.
+Les requêtes ne font que **lire** le catalogue PostgreSQL : elles ne modifient rien. Elles ont été testées sur PostgreSQL 16 avec un schéma imitant Supabase.
 
-## Ce que l'analyse du fichier SQL comprend
+## Ce que l'analyse des fichiers comprend
 
-Le script repère trois instructions, en ignorant les commentaires (`--` et `/* */`) :
+Les commentaires (`--` et `/* */`), les chaînes et les corps de fonction `$$ ... $$` sont ignorés. Les instructions reconnues :
 
-- `CREATE TABLE [IF NOT EXISTS] nom`
-- `ALTER TABLE [ONLY] nom ENABLE ROW LEVEL SECURITY`
-- `CREATE POLICY ... ON nom`
+- `CREATE TABLE [IF NOT EXISTS]` et `DROP TABLE`
+- `ALTER TABLE ... ENABLE | DISABLE | FORCE ROW LEVEL SECURITY`
+- `CREATE POLICY` (commande, rôles `TO`, `USING`, `WITH CHECK`) et `DROP POLICY`
+- `CREATE INDEX` (pour le contrôle de `user_id`)
+- `CREATE VIEW` et `CREATE FUNCTION` (pour `security_invoker` et `SECURITY DEFINER`)
 
-Les noms entre guillemets et le préfixe `public.` sont acceptés.
+Les noms entre guillemets et les préfixes de schéma sont acceptés.
 
 ## Limites à connaître
 
 - **Il lit du texte, il n'exécute rien.** Une table créée depuis le tableau de bord Supabase, par un outil de migration ou par du SQL dynamique n'apparaît pas dans le fichier. Pour l'état réel de la base, utilise `rls-audit.sql`.
-- **Schéma `public` uniquement.** Les tables écrites avec un autre schéma (`auth.`, `storage.`, un schéma à toi) ne sont pas gérées correctement par le script.
-- **Il ne juge pas le contenu des politiques.** Il vérifie leur présence. Une politique `using (true)` sur des données privées donne un 🟢. Pour ça, la requête 3 de `rls-audit.sql` aide, mais seulement pour les écritures et seulement pour la valeur littérale `true`.
-- **Il ne regarde pas** `FORCE ROW LEVEL SECURITY`, les vues (qui doivent être en `security_invoker`), les fonctions `SECURITY DEFINER`, ni les droits (`GRANT`) accordés aux rôles.
-- Les noms sont comparés en minuscules : deux tables qui ne diffèrent que par la casse seraient confondues.
+- **Il ne juge pas le sens des politiques.** Il détecte les cas évidents (`true`, rôle `anon`), pas une condition qui filtre mal.
+- **Il ne regarde pas** les droits `GRANT` accordés aux rôles, ni `ALTER TABLE ... RENAME`, ni les politiques créées dans des fonctions.
+- Les noms sont comparés en minuscules.
 
 ## Pour aller plus loin
 
@@ -98,7 +120,7 @@ Les noms entre guillemets et le préfixe `public.` sont acceptés.
 npm test
 ```
 
-Utilise le lanceur de tests intégré à Node (18 ou plus), sans dépendance. Les tests sont exécutés automatiquement sur GitHub (Node 18, 20 et 22) à chaque push.
+14 tests : des tests unitaires (découpage SQL, chaque contrôle) et des tests de bout en bout qui lancent la commande. Ils utilisent le lanceur de tests intégré à Node (18 ou plus), sans dépendance. Les tests sont exécutés automatiquement sur GitHub (Node 18, 20 et 22) à chaque push.
 
 ## Licence
 
