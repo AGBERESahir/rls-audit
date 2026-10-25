@@ -139,7 +139,10 @@ function evaluer(etat, schemas = ['public']) {
         ajouter('info', objet, `politique « ${p.nom} » filtre sur user_id sans index sur cette colonne : les requêtes ralentiront avec le volume.`);
       }
     }
-    if (trouvailles.length === avant) ajouter('ok', objet, `RLS activée, ${t.politiques.length} politique(s).`);
+    // une table sans alerte critique ni importante reste verte ; les remarques 🟡 s'affichent en dessous
+    if (!trouvailles.slice(avant).some(x => x.niveau === 'critique' || x.niveau === 'important')) {
+      trouvailles.splice(avant, 0, { niveau: 'ok', objet, message: `RLS activée, ${t.politiques.length} politique(s).` });
+    }
   }
   for (const v of etat.vues) {
     if (schemas.includes(v.schema) && !v.invoker) ajouter('important', `vue ${v.nom}`, 'sans security_invoker = true : la vue s\'exécute avec les droits de son propriétaire et contourne la RLS.');
