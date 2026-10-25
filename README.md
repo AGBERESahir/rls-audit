@@ -92,6 +92,14 @@ Les noms entre guillemets et le préfixe `public.` sont acceptés.
 - Identifie le propriétaire avec `(select auth.uid())` et indexe la colonne utilisée (`user_id`).
 - La clé `service_role` ne doit jamais se retrouver dans le code du navigateur : [secret-guard](https://github.com/AGBERESahir/secret-guard) bloque ce genre de commit.
 
+## Tests
+
+```bash
+npm test
+```
+
+Utilise le lanceur de tests intégré à Node (18 ou plus), sans dépendance. Les tests sont exécutés automatiquement sur GitHub (Node 18, 20 et 22) à chaque push.
+
 ## Licence
 
 MIT, voir [LICENSE](LICENSE).
