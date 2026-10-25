@@ -1,15 +1,13 @@
 {
   "name": "rls-audit",
-  "version": "1.0.0",
-  "description": "Signale les tables SQL sans RLS ou sans politique (fichier SQL ou audit en direct dans Supabase).",
+  "version": "1.1.0",
+  "description": "Audit des politiques RLS (Row Level Security) Supabase/PostgreSQL : fichiers SQL, migrations ou base en direct.",
   "license": "MIT",
-  "bin": {
-    "rls-audit": "rls-audit.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "scripts": {
-    "test": "node --test"
-  }
+  "bin": { "rls-audit": "rls-audit.js" },
+  "scripts": { "test": "node --test", "exemple": "node rls-audit.js exemple/schema-risque.sql" },
+  "files": ["rls-audit.js", "rls-audit.sql"],
+  "keywords": ["supabase", "postgresql", "rls", "row-level-security", "sécurité", "audit", "sql", "cli"],
+  "repository": { "type": "git", "url": "git+https://github.com/AGBERESahir/rls-audit.git" },
+  "author": "Sâhir AGBERE",
+  "engines": { "node": ">=18" }
 }
